@@ -1,5 +1,6 @@
 import json
 import sys
+import os
 from typing import List, Dict, Optional
 
 # Constants
@@ -51,12 +52,15 @@ def parse_header(line: str) -> tuple[Optional[int], Optional[int]]:
     # Handle "1659-1660" -> 1660 (modern year)
     if '-' in year_part:
         try:
-            year = int(year_part.split('-')[1])
+            y_str = year_part.split('-')[1]
+            year = int(y_str)
+            if year < 100: year += 1600 # Handle "61" -> 1661
         except ValueError:
             year = None
     else:
         try:
             year = int(year_part)
+            if year < 100: year += 1600
         except ValueError:
             year = None
             
@@ -74,6 +78,9 @@ def is_entry_start(line: str) -> bool:
         return False
         
     first_part = parts[0].rstrip('.,')
+    
+    if not first_part:
+        return False
     
     # Case 1: Starts with number (e.g. "1st.", "2nd.")
     if first_part[0].isdigit():
@@ -102,16 +109,28 @@ def is_entry_start(line: str) -> bool:
                 # e.g. "1st." "1st," "1."
                 
                 if not remaining: 
-                    # Just a number. Pepys usually has dot. But maybe "1 Jan"
+                    # Just a number "1" or "29".
+                    # Pepys usually has dot.
+                    # Require punctuation OR specific context (like parens or month)
                     if len(parts) > 1:
-                        return True
-                    return False # Just "1" on a line? Unlikely entry start.
+                        # Case: "1 January"
+                        if parts[1] in SHORT_MONTHS or parts[1].upper() in MONTHS:
+                            return True
+                        # Case: "1 (Sunday)"
+                        if parts[1].startswith('('):
+                            return True
+                            
+                    return False # "29th of May" -> remaining is "th", handled below. "1" -> False.
                 
                 # Check for suffix
                 suffix_found = False
                 suffix_len = 0
                 for s in valid_suffixes:
                     if remaining.startswith(s):
+                        # Special check for 'd' suffix: only allow 2d, 3d, 22d, 23d
+                        if s == 'd' and val not in [2, 3, 22, 23]:
+                            continue # Try other suffixes or fail
+                            
                         suffix_found = True
                         suffix_len = len(s)
                         break
@@ -123,8 +142,15 @@ def is_entry_start(line: str) -> bool:
                     # e.g. "th." or "th," or "th" (if space followed)
                     # But "thstring" is invalid.
                     if not after_suffix:
-                        return True
+                        # Suffix ended the word (e.g. "29th" in "29th of May")
+                        # Require punctuation or special context
+                        if len(parts) > 1:
+                            if parts[1].startswith('('): return True
+                            if parts[1] in SHORT_MONTHS or parts[1].upper() in MONTHS: return True
+                        return False # "29th" followed by "of" -> False
+                        
                     if not after_suffix[0].isalnum():
+                        # Has punctuation, e.g. "th."
                         return True
                         
                 # Check for simple dot after number
@@ -134,7 +160,6 @@ def is_entry_start(line: str) -> bool:
         return False
         
     # Case 2: Starts with Month (e.g. "Jan. 1st")
-    # Check against short months or full months (capitalized title case usually)
     first_part_clean = first_part.replace('.', '')
     if first_part_clean in SHORT_MONTHS or first_part_clean.upper() in MONTHS:
         # Check if second part exists and is a number/ordinal
@@ -180,8 +205,8 @@ def parse_entry_date(line: str, current_year: int, current_month: int) -> tuple[
         
     return year, month, day, line
 
-def is_footnote(line: str) -> bool:
-    """Check if line is an indented footnote block."""
+def is_footnote_start(line: str) -> bool:
+    """Check if line is start of an indented footnote block."""
     # Check for indentation (start with space) and opening bracket
     if line.startswith(' ') or line.startswith('\t'):
         stripped = line.strip()
@@ -189,17 +214,10 @@ def is_footnote(line: str) -> bool:
             return True
     return False
 
-def clean_inline_footnotes(text: str) -> str:
+def process_inline_footnotes(text: str, start_index: int, footnotes_list: List[str]) -> str:
     """
-    Remove explanatory footnotes [text] but keep restorations like [he].
-    Strategy: 
-    1. Find brackets [ ]
-    2. If text inside is short (e.g. < 15 chars) or looks like a restoration (starts with lowercase or specific words), keep it.
-    3. Otherwise remove.
+    Extract inline footnotes [text] to {N}, keep restorations [he].
     """
-    # Simple bracket removal for now as requested: "remove all the footnotes but keep references in place"
-    # User clarified: "Remove only explanatory notes (long text/definitions) and keep restorations like [he]"
-    
     result = ""
     i = 0
     n = len(text)
@@ -209,19 +227,36 @@ def clean_inline_footnotes(text: str) -> str:
             j = text.find(']', i)
             if j != -1:
                 content = text[i+1:j]
-                # Heuristic: Keep if short (< 20 chars) or seems to be part of sentence flow
+                
+                # Heuristic: Keep if short (< 25 chars) or seems to be part of sentence flow
                 # Most explanatory notes are long sentences or start with "Ed. note" or names/definitions
                 
                 is_restoration = False
-                if len(content) < 25:
-                    is_restoration = True
-                elif content.strip().lower().startswith("i.e."):
-                    is_restoration = True
                 
+                # Check for specific restoration patterns
+                if len(content) < 25:
+                    # Check if it looks like a definition?
+                    # "i.e." is a definition/footnote usually
+                    if content.strip().lower().startswith("i.e."):
+                        is_restoration = False # Treat as footnote
+                    elif "note" in content.lower():
+                         is_restoration = False
+                    else:
+                        # Assume short things are restorations like [he], [she], [dirted]
+                        is_restoration = True
+                
+                # Also check for "Ed. note" or similar explicit markers
+                if "Ed." in content or "note:" in content:
+                    is_restoration = False
+
                 if is_restoration:
                     result += text[i:j+1] # Keep it including brackets
                 else:
-                    pass # Skip it
+                    # Extract as footnote
+                    footnotes_list.append(content)
+                    marker = f"{{{start_index + len(footnotes_list) - 1}}}"
+                    result += marker
+                
                 i = j + 1
                 continue
         result += text[i]
@@ -233,48 +268,92 @@ def process_diary(file_path: str, output_path: str):
     current_month = 1
     current_entry_date = None
     current_entry_lines = []
+    current_footnotes = []
     
     entries = []
     
     def flush_entry():
-        nonlocal current_entry_lines, current_entry_date
+        nonlocal current_entry_lines, current_entry_date, current_footnotes
         if current_entry_date and current_entry_lines:
+            # Join first
             full_text = " ".join(line.strip() for line in current_entry_lines)
-            cleaned_text = clean_inline_footnotes(full_text)
+            
+            # Now process inline
+            processed_text = process_inline_footnotes(full_text, len(current_footnotes), current_footnotes)
+            
             entries.append({
                 "date": current_entry_date,
-                "entry": cleaned_text
+                "entry": processed_text,
+                "footnotes": list(current_footnotes) # Copy
             })
+            
             current_entry_lines = []
+            current_footnotes = []
     
     with open(file_path, 'r', encoding='utf-8') as f:
         lines = f.readlines()
         
-    # Skip file header (first few lines usually file metadata in some text files, but here seems to start with HEADER)
-    
     in_footnote_block = False
+    in_bookmarks_block = False
+    current_block_footnote_text = []
     
     for line in lines:
         stripped = line.strip()
         if not stripped:
             continue
             
-        # Check for block footnotes
-        if is_footnote(line):
-            in_footnote_block = True
+        # Check for bookmarks block start
+        if "ETEXT EDITOR’S BOOKMARKS" in stripped:
+            in_bookmarks_block = True
+            continue
+            
+        # If in bookmarks block, check if we should exit (Header or Entry Start)
+        if in_bookmarks_block:
+            if is_header(stripped) or is_entry_start(stripped):
+                in_bookmarks_block = False
+            else:
+                continue
+
+        # Check for block footnotes start
+        if is_footnote_start(line):
+            # Check if it's a single-line footnote
+            if stripped.endswith(']'):
+                # Single line footnote
+                note_content = stripped.lstrip('[').rstrip(']').rstrip()
+                current_footnotes.append(note_content)
+                marker = f"{{{len(current_footnotes) - 1}}}"
+                if current_entry_lines:
+                    current_entry_lines[-1] += marker
+            else:
+                # Multi-line start
+                in_footnote_block = True
+                current_block_footnote_text = [stripped.lstrip('[').rstrip()] 
             continue
             
         if in_footnote_block:
-            # Check if we are still in footnote block (indentation continues)
-            # Or if it ended (end bracket usually)
-            if line.strip().endswith(']'):
+            # Check end
+            if stripped.endswith(']'):
                 in_footnote_block = False
-            # Also if indentation stops, it might be end of footnote
-            if not (line.startswith(' ') or line.startswith('\t')):
-                in_footnote_block = False
-                # Reprocess this line as it is not a footnote
+                current_block_footnote_text.append(stripped.rstrip(']').rstrip())
+                
+                # Finish block footnote
+                note_content = " ".join(current_block_footnote_text)
+                
+                # Add to footnotes list
+                current_footnotes.append(note_content)
+                marker = f"{{{len(current_footnotes) - 1}}}"
+                
+                # Append marker to the last line of current entry
+                if current_entry_lines:
+                    current_entry_lines[-1] += marker
+                else:
+                    # If no entry yet (rare, maybe before first entry?), just ignore or print warning
+                    pass
+                
+                current_block_footnote_text = []
             else:
-                continue
+                current_block_footnote_text.append(stripped)
+            continue
 
         if is_header(stripped):
             m, y = parse_header(stripped)
@@ -294,6 +373,9 @@ def process_diary(file_path: str, output_path: str):
                 
     flush_entry()
     
+    # Ensure output directory exists
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    
     with open(output_path, 'w', encoding='utf-8') as f:
         for entry in entries:
             f.write(json.dumps(entry) + '\n')
@@ -301,5 +383,4 @@ def process_diary(file_path: str, output_path: str):
     print(f"Processed {len(entries)} entries.")
 
 if __name__ == "__main__":
-    process_diary("diary-sample.txt", "diary-parsed.jsonl")
-
+    process_diary("data/diary-trimmed.txt", "data/diary-parsed.ndjson")
