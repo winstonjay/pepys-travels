@@ -2,6 +2,8 @@
 
 > "But Lord! to see the absurd nature of Englishmen, that cannot forbear laughing and jeering at everything that looks strange." — *Samuel Pepys*
 
+Note: This is a completely vibe coded project - don't judge me code!
+
 ## Overview
 
 The aim of this project is using AI to plot out the travels of Samuel Pepys. By analyzing his famous diary, we extract locations, dates, and events to visualize his journeys through 17th-century London and beyond.
