@@ -8,14 +8,17 @@ The aim of this project is using AI to plot out the travels of Samuel Pepys. By 
 
 ## Getting Started
 
-1.  **Clone the repository**.
-2.  **Run the preprocessing script**:
+1. **Clone the repository**.
+2. **Run the preprocessing script**:
+
     ```bash
     ./preprocess_diary.sh
     ```
+
     This will download the data, parse it, check for consistency, and generate statistics.
+
 3. TODO: Use AI to parse Trips in entries.
 
 ## Requirements
-* Just plain python, no dependencies.
 
+* Just plain python, no dependencies.

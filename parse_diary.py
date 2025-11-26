@@ -296,15 +296,18 @@ def process_diary(file_path: str, output_path: str):
     in_footnote_block = False
     in_bookmarks_block = False
     current_block_footnote_text = []
+    previous_line_blank = False
     
     for line in lines:
         stripped = line.strip()
         if not stripped:
+            previous_line_blank = True
             continue
             
         # Check for bookmarks block start
         if "ETEXT EDITOR’S BOOKMARKS" in stripped:
             in_bookmarks_block = True
+            previous_line_blank = False
             continue
             
         # If in bookmarks block, check if we should exit (Header or Entry Start)
@@ -312,6 +315,7 @@ def process_diary(file_path: str, output_path: str):
             if is_header(stripped) or is_entry_start(stripped):
                 in_bookmarks_block = False
             else:
+                previous_line_blank = False
                 continue
 
         # Check for block footnotes start
@@ -328,6 +332,7 @@ def process_diary(file_path: str, output_path: str):
                 # Multi-line start
                 in_footnote_block = True
                 current_block_footnote_text = [stripped.lstrip('[').rstrip()] 
+            previous_line_blank = False
             continue
             
         if in_footnote_block:
@@ -353,6 +358,7 @@ def process_diary(file_path: str, output_path: str):
                 current_block_footnote_text = []
             else:
                 current_block_footnote_text.append(stripped)
+            previous_line_blank = False
             continue
 
         if is_header(stripped):
@@ -360,9 +366,10 @@ def process_diary(file_path: str, output_path: str):
             if m and y:
                 current_month = m
                 current_year = y
+            previous_line_blank = False
             continue
             
-        if is_entry_start(stripped):
+        if is_entry_start(stripped) and previous_line_blank and not line[0].isspace():
             flush_entry()
             year, month, day, _ = parse_entry_date(stripped, current_year, current_month)
             current_entry_date = f"{year:04d}-{month:02d}-{day:02d}"
@@ -370,6 +377,8 @@ def process_diary(file_path: str, output_path: str):
         else:
             if current_entry_date:
                 current_entry_lines.append(stripped)
+        
+        previous_line_blank = False
                 
     flush_entry()
     
