@@ -5,6 +5,7 @@ from datetime import datetime
 def check_dates(file_path: str):
     previous_date = None
     previous_line_num = 0
+    previous_entry_text = ""
     
     issues = []
     
@@ -15,6 +16,8 @@ def check_dates(file_path: str):
             try:
                 entry = json.loads(line)
                 date_str = entry.get('date')
+                current_entry_text = entry.get('entry', '')[:100] + "..." if len(entry.get('entry', '')) > 100 else entry.get('entry', '')
+
                 if not date_str:
                     print(f"Line {i}: Missing date")
                     continue
@@ -26,13 +29,16 @@ def check_dates(file_path: str):
                         issues.append({
                             "line": i,
                             "current_date": date_str,
+                            "current_text": current_entry_text,
                             "previous_date": previous_date.strftime("%Y-%m-%d"),
                             "previous_line": previous_line_num,
+                            "previous_text": previous_entry_text,
                             "diff_days": (previous_date - current_date).days
                         })
                         
                 previous_date = current_date
                 previous_line_num = i
+                previous_entry_text = current_entry_text
                 
             except json.JSONDecodeError:
                 print(f"Line {i}: Invalid JSON")
@@ -43,9 +49,12 @@ def check_dates(file_path: str):
         print(f"Found {len(issues)} out-of-order entries:")
         for issue in issues:
             print(f"Line {issue['line']} ({issue['current_date']}) is BEFORE Line {issue['previous_line']} ({issue['previous_date']}) by {issue['diff_days']} days.")
+            print(f"  Curr: {issue['current_text']}")
+            print(f"  Prev: {issue['previous_text']}")
+            print("-" * 40)
     else:
         print("All entries are in chronological order.")
 
 if __name__ == "__main__":
-    check_dates("diary-parsed.ndjson")
+    check_dates("data/diary-parsed.ndjson")
 

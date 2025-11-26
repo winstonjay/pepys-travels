@@ -93,5 +93,5 @@ def generate_stats(input_file: str, output_file: str):
         print(f"Error: File {input_file} not found.")
 
 if __name__ == "__main__":
-    generate_stats("output/diary-parsed.ndjson", "output/diary-stats.csv")
+    generate_stats("data/diary-parsed.ndjson", "data/diary-stats.csv")
 
